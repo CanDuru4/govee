@@ -1,0 +1,168 @@
+{
+  "sku": "H7126",
+  "device": "AA:BB:CC:DD:EE:FF:00:12",
+  "deviceName": "Smart Air Purifier",
+  "type": "devices.types.air_purifier",
+  "capabilities": [
+    {
+      "type": "devices.capabilities.on_off",
+      "instance": "powerSwitch",
+      "parameters": {
+        "dataType": "ENUM",
+        "options": [
+          {
+            "name": "on",
+            "value": 1
+          },
+          {
+            "name": "off",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "type": "devices.capabilities.work_mode",
+      "instance": "workMode",
+      "parameters": {
+        "dataType": "STRUCT",
+        "fields": [
+          {
+            "fieldName": "workMode",
+            "dataType": "ENUM",
+            "options": [
+              {
+                "name": "Sleeping",
+                "value": 1
+              },
+              {
+                "name": "Low",
+                "value": 2
+              },
+              {
+                "name": "High",
+                "value": 3
+              },
+              {
+                "name": "Custom",
+                "value": 4
+              }
+            ],
+            "required": true
+          },
+          {
+            "fieldName": "modeValue",
+            "dataType": "ENUM",
+            "options": [
+              {
+                "name": "Sleeping",
+                "value": null,
+                "extras": {
+                  "defaultValue": 0
+                }
+              },
+              {
+                "name": "Low",
+                "value": null,
+                "extras": {
+                  "defaultValue": 0
+                }
+              },
+              {
+                "name": "High",
+                "value": null,
+                "extras": {
+                  "defaultValue": 0
+                }
+              },
+              {
+                "name": "Custom",
+                "value": null,
+                "extras": {
+                  "defaultValue": 0
+                }
+              }
+            ],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "type": "devices.capabilities.range",
+      "instance": "pm25",
+      "parameters": {
+        "dataType": "INTEGER",
+        "range": {
+          "min": 0,
+          "max": 999,
+          "precision": 1
+        },
+        "unit": "unit.ug_m3"
+      }
+    },
+    {
+      "type": "devices.capabilities.range",
+      "instance": "humidity",
+      "parameters": {
+        "dataType": "INTEGER",
+        "range": {
+          "min": 0,
+          "max": 100,
+          "precision": 1
+        },
+        "unit": "unit.percent"
+      }
+    },
+    {
+      "type": "devices.capabilities.range",
+      "instance": "temperature",
+      "parameters": {
+        "dataType": "INTEGER",
+        "range": {
+          "min": -20,
+          "max": 60,
+          "precision": 1
+        },
+        "unit": "unit.celsius"
+      }
+    },
+    {
+      "type": "devices.capabilities.toggle",
+      "instance": "filterLifeReset",
+      "parameters": {
+        "dataType": "ENUM",
+        "options": [
+          {
+            "name": "on",
+            "value": 1
+          },
+          {
+            "name": "off",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "type": "devices.capabilities.range",
+      "instance": "filterLife",
+      "parameters": {
+        "dataType": "INTEGER",
+        "range": {
+          "min": 0,
+          "max": 100,
+          "precision": 1
+        },
+        "unit": "unit.percent"
+      }
+    },
+    {
+      "type": "devices.capabilities.online",
+      "instance": "online",
+      "parameters": {
+        "dataType": "BOOLEAN"
+      }
+    }
+  ]
+}

@@ -171,8 +171,7 @@ pub async fn enumerate_entities_for_device<'a>(
         entities.add(Humidifier::new(&d, state).await?);
     }
 
-    // For air purifiers, expose explicit mode buttons and power switch instead
-    // of the combined fan entity to simplify the UI
+    // We keep the default entity set and let HASS refresh configs after restart
 
     if d.device_type() != DeviceType::Light {
         if let Some(scenes) = SceneModeSelect::new(d, state).await? {
@@ -201,13 +200,7 @@ pub async fn enumerate_entities_for_device<'a>(
                 DeviceCapabilityKind::Range if cap.instance == "brightness" => {}
                 DeviceCapabilityKind::Range if cap.instance == "humidity" => {}
                 DeviceCapabilityKind::WorkMode => {
-                    // For air purifiers, show preset buttons and a Mode select instead of the fan entity
-                    if d.device_type() == DeviceType::AirPurifier {
-                        entities_for_work_mode(d, state, cap, entities).await?;
-                        entities.add(WorkModeSelect::new(d, &ParsedWorkMode::with_capability(cap)?, state));
-                    } else {
-                        entities_for_work_mode(d, state, cap, entities).await?;
-                    }
+                    entities_for_work_mode(d, state, cap, entities).await?;
                 }
 
                 DeviceCapabilityKind::Property => {

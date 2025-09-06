@@ -30,6 +30,8 @@ const FAN_DEBOUNCE_MS: u64 = 120;
 // Stabilization window after user-initiated slider changes
 static FAN_STABILIZE_UNTIL: Lazy<TokioMutex<HashMap<String, Instant>>> =
     Lazy::new(|| TokioMutex::new(HashMap::new()));
+static FAN_PINNED_PCT: Lazy<TokioMutex<HashMap<String, i64>>> =
+    Lazy::new(|| TokioMutex::new(HashMap::new()));
 
 pub async fn fan_mark_stabilize(id: &str, secs: u64) {
     let mut m = FAN_STABILIZE_UNTIL.lock().await;
@@ -42,6 +44,27 @@ pub async fn fan_in_stabilize_window(id: &str) -> bool {
         return Instant::now() < until;
     }
     false
+}
+
+pub async fn fan_set_pinned_pct(id: &str, pct: i64) {
+    let mut p = FAN_PINNED_PCT.lock().await;
+    p.insert(id.to_string(), pct);
+}
+
+pub async fn fan_pinned_pct(id: &str) -> Option<i64> {
+    let p = FAN_PINNED_PCT.lock().await;
+    p.get(id).copied()
+}
+
+pub async fn fan_clear_stabilize(id: &str) {
+    {
+        let mut m = FAN_STABILIZE_UNTIL.lock().await;
+        m.remove(id);
+    }
+    {
+        let mut p = FAN_PINNED_PCT.lock().await;
+        p.remove(id);
+    }
 }
 
 #[derive(clap::Parser, Debug)]
@@ -585,7 +608,9 @@ async fn mqtt_fan_percentage_command(
     let step: u8 = pct_to_step(pct);
 
     // Begin stabilization window so real-state publishes don't flicker the UI
+    let pct_to_show = step_to_pct(step);
     fan_mark_stabilize(&id, 8).await;
+    fan_set_pinned_pct(&id, pct_to_show).await;
 
     // Optimistic UI update immediately
     if let Some(client) = state.get_hass_client().await {
@@ -607,6 +632,23 @@ async fn mqtt_fan_percentage_command(
     {
         let mut map = FAN_DEBOUNCE.lock().await;
         map.insert(id.clone(), pct);
+    }
+
+    // Optionally echo pinned percentage during stabilize window
+    {
+        let state_clone = state.clone();
+        let id_clone = id.clone();
+        tokio::spawn(async move {
+            for _ in 0..8 {
+                if !fan_in_stabilize_window(&id_clone).await { break; }
+                if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&id_clone).await) {
+                    let _ = client
+                        .publish(format!("gv2mqtt/fan/{id_clone}/notify-percentage"), pinned.to_string())
+                        .await;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+        });
     }
 
     // Debounced worker to coalesce rapid slider updates
@@ -699,6 +741,9 @@ async fn mqtt_fan_percentage_command(
             let mut map = FAN_DEBOUNCE.lock().await;
             map.remove(&id2);
         }
+
+        // Clear stabilize window and pinned value
+        fan_clear_stabilize(&id2).await;
     });
 
     Ok(())

@@ -502,18 +502,19 @@ async fn mqtt_fan_percentage_command(
 )
     -> anyhow::Result<()>
 {
-    let mut pct: i64 = payload.trim().parse().unwrap_or(0);
+    let pct: i64 = payload.trim().parse().unwrap_or(0);
     let device = state.resolve_device_for_control(&id).await?;
 
     // 0 means OFF
     if pct <= 0 {
-        log::info!("fan cmd pct -> {} (step 0 / OFF)", pct);
+        log::info!("fan pct cmd {} -> OFF", pct);
         state.device_power_on(&device, false).await?;
         return Ok(());
     }
 
     // Map percentage to 4 steps: 1=Sleep, 2=Low, 3=High, 4=Custom
     let step: u8 = if pct <= 25 { 1 } else if pct <= 50 { 2 } else if pct <= 75 { 3 } else { 4 };
+    log::info!("fan pct cmd {} -> step {}", pct, step);
 
     let wm = crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(&device)?;
     // Resolve work mode ids
@@ -524,7 +525,13 @@ async fn mqtt_fan_percentage_command(
         .find(|m| m.name.eq_ignore_ascii_case("custom"))
         .and_then(|m| m.value.as_i64());
 
-    state.device_power_on(&device, true).await?;
+    // Power ON only if currently OFF, to avoid resetting to Sleep via power-on
+    let was_off = !device.device_state().map(|s| s.on).unwrap_or(false);
+    if was_off {
+        state.device_power_on(&device, true).await?;
+        // Give the device/cloud a brief moment to settle before the mode change
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
     match step {
         1 => {
             if let Some(id_num) = gear_mode_id {

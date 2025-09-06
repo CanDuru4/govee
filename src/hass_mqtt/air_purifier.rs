@@ -85,10 +85,10 @@ impl AirPurifier {
 
         let unique_id = format!("gv2mqtt-{id}-fan", id = topic_safe_id(device));
 
-        // No presets; we expose a simple 4-step slider (1..4)
+        // No presets; expose percentage-only slider (0..100 with 25% steps)
         let preset_modes: Vec<String> = vec![];
-        let speed_range_min: Option<i64> = Some(1);
-        let speed_range_max: Option<i64> = Some(4);
+        let speed_range_min: Option<i64> = None;
+        let speed_range_max: Option<i64> = None;
 
         Ok(Self {
             air_purifier: AirPurifierConfig {

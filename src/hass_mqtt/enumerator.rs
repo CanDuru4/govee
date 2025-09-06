@@ -105,6 +105,12 @@ async fn entities_for_work_mode<'a>(
                 .unwrap_or(false);
 
         if show_as_preset {
+            // For air purifiers, don't create extra preset buttons.
+            // The single Fan entity already exposes preset modes,
+            // which keeps HomeKit as a single accessory.
+            if d.device_type() == DeviceType::AirPurifier {
+                continue;
+            }
             if work_mode.values.is_empty() {
                 entities.add(ButtonConfig::activate_work_mode_preset(
                     d,
@@ -169,6 +175,11 @@ pub async fn enumerate_entities_for_device<'a>(
         DeviceType::Humidifier | DeviceType::Dehumidifier
     ) {
         entities.add(Humidifier::new(&d, state).await?);
+    }
+
+    // Ensure we expose a single Fan entity for air purifiers
+    if d.device_type() == DeviceType::AirPurifier {
+        entities.add(AirPurifier::new(&d, state).await?);
     }
 
     // We keep the default entity set and let HASS refresh configs after restart

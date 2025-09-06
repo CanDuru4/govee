@@ -15,7 +15,7 @@ use async_channel::Receiver;
 use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use mosquitto_rs::{Client, Event, QoS};
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,23 @@ const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_s
 static FAN_DEBOUNCE: Lazy<TokioMutex<HashMap<String, i64>>> =
     Lazy::new(|| TokioMutex::new(HashMap::new()));
 const FAN_DEBOUNCE_MS: u64 = 120;
+
+// Stabilization window after user-initiated slider changes
+static FAN_STABILIZE_UNTIL: Lazy<TokioMutex<HashMap<String, Instant>>> =
+    Lazy::new(|| TokioMutex::new(HashMap::new()));
+
+pub async fn fan_mark_stabilize(id: &str, secs: u64) {
+    let mut m = FAN_STABILIZE_UNTIL.lock().await;
+    m.insert(id.to_string(), Instant::now() + Duration::from_secs(secs));
+}
+
+pub async fn fan_in_stabilize_window(id: &str) -> bool {
+    let m = FAN_STABILIZE_UNTIL.lock().await;
+    if let Some(until) = m.get(id).copied() {
+        return Instant::now() < until;
+    }
+    false
+}
 
 #[derive(clap::Parser, Debug)]
 pub struct HassArguments {
@@ -566,6 +583,9 @@ async fn mqtt_fan_percentage_command(
 {
     let pct: i64 = payload.trim().parse().unwrap_or(0);
     let step: u8 = pct_to_step(pct);
+
+    // Begin stabilization window so real-state publishes don't flicker the UI
+    fan_mark_stabilize(&id, 8).await;
 
     // Optimistic UI update immediately
     if let Some(client) = state.get_hass_client().await {

@@ -130,6 +130,12 @@ impl EntityInstance for AirPurifier {
     }
 
     async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
+        // If we're within a post-command stabilization window, skip
+        // publishing real device-origin state to avoid UI flicker
+        if crate::service::hass::fan_in_stabilize_window(&self.device_id).await {
+            return Ok(());
+        }
+
         // Publish current power and percentage (mapped 0,25,50,75,100)
         let device = self
             .state

@@ -284,6 +284,11 @@ pub struct IdParameter {
     pub id: String,
 }
 
+// Build the percentage state topic for a given MQTT topic id
+fn fan_pct_topic_for_id(id: &str) -> String {
+    format!("gv2mqtt/fan/{id}/notify-percentage")
+}
+
 // Helper mapping for percentage <-> discrete steps
 fn pct_to_step(p: i64) -> u8 {
     if p <= 0 {
@@ -604,13 +609,14 @@ async fn mqtt_fan_percentage_command(
 )
     -> anyhow::Result<()>
 {
-    let pct: i64 = payload.trim().parse().unwrap_or(0);
+    let pct: i64 = payload.trim().parse().unwrap_or(0).clamp(0, 100);
     let step: u8 = pct_to_step(pct);
 
     // Begin stabilization window so real-state publishes don't flicker the UI
     let pct_to_show = step_to_pct(step);
-    fan_mark_stabilize(&id, 8).await;
-    fan_set_pinned_pct(&id, pct_to_show).await;
+    let stab_key = fan_pct_topic_for_id(&id);
+    fan_mark_stabilize(&stab_key, 8).await;
+    fan_set_pinned_pct(&stab_key, pct_to_show).await;
 
     // Optimistic UI update immediately
     if let Some(client) = state.get_hass_client().await {
@@ -620,12 +626,7 @@ async fn mqtt_fan_percentage_command(
                 if step == 0 { "OFF" } else { "ON" },
             )
             .await;
-        let _ = client
-            .publish(
-                format!("gv2mqtt/fan/{id}/notify-percentage"),
-                step_to_pct(step).to_string(),
-            )
-            .await;
+        let _ = client.publish(stab_key.clone(), step_to_pct(step).to_string()).await;
     }
 
     // Record the latest requested percentage for this device id
@@ -638,11 +639,12 @@ async fn mqtt_fan_percentage_command(
     {
         let state_clone = state.clone();
         let id_clone = id.clone();
+        let stab_key_clone = stab_key.clone();
         tokio::spawn(async move {
             // Echo pinned values during the stabilization window
             for _ in 0..20 { // ~8s at 400ms
-                if !fan_in_stabilize_window(&id_clone).await { break; }
-                if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&id_clone).await) {
+                if !fan_in_stabilize_window(&stab_key_clone).await { break; }
+                if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&stab_key_clone).await) {
                     let _ = client
                         .publish(
                             format!("gv2mqtt/fan/{id_clone}/state"),
@@ -650,10 +652,7 @@ async fn mqtt_fan_percentage_command(
                         )
                         .await;
                     let _ = client
-                        .publish(
-                            format!("gv2mqtt/fan/{id_clone}/notify-percentage"),
-                            pinned.to_string(),
-                        )
+                        .publish(stab_key_clone.clone(), pinned.to_string())
                         .await;
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
@@ -683,10 +682,15 @@ async fn mqtt_fan_percentage_command(
             let _ = state2.device_power_on(&device, false).await;
             if let Some(client) = state2.get_hass_client().await {
                 let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "OFF").await;
-                let _ = client
-                    .publish(format!("gv2mqtt/fan/{id2}/notify-percentage"), "0")
-                    .await;
+                let _ = client.publish(fan_pct_topic_for_id(&id2), "0").await;
             }
+            // cleanup debounce entry to avoid stale values
+            {
+                let mut map = FAN_DEBOUNCE.lock().await;
+                map.remove(&id2);
+            }
+            // Optionally clear the stabilize window; comment this out if you prefer to hold
+            // fan_clear_stabilize(&fan_pct_topic_for_id(&id2)).await;
             return;
         }
 
@@ -738,12 +742,7 @@ async fn mqtt_fan_percentage_command(
         // Mirror state optimistically
         if let Some(client) = state2.get_hass_client().await {
             let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
-            let _ = client
-                .publish(
-                    format!("gv2mqtt/fan/{id2}/notify-percentage"),
-                    step_to_pct(step).to_string(),
-                )
-                .await;
+            let _ = client.publish(fan_pct_topic_for_id(&id2), step_to_pct(step).to_string()).await;
         }
 
         // Trim debounce entry for this id
@@ -753,7 +752,7 @@ async fn mqtt_fan_percentage_command(
         }
 
         // Clear stabilize window and pinned value
-        fan_clear_stabilize(&id2).await;
+        fan_clear_stabilize(&stab_key).await;
     });
 
     Ok(())

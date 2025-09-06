@@ -136,15 +136,21 @@ impl EntityInstance for AirPurifier {
     }
 
     async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
-        // During stabilization, publish the pinned percentage value keyed by topic id
-        if fan_in_stabilize_window(&self.topic_id).await {
-            if let Some(pinned) = fan_pinned_pct(&self.topic_id).await {
+        // During stabilization, publish the pinned percentage value keyed by the exact percentage state topic
+        let pct_topic_key = self
+            .air_purifier
+            .percentage_state_topic
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        if fan_in_stabilize_window(&pct_topic_key).await {
+            if let Some(pinned) = fan_pinned_pct(&pct_topic_key).await {
                 _client
                     .publish(&self.air_purifier.state_topic, if pinned > 0 { "ON" } else { "OFF" })
                     .await?;
-                if let Some(pct_topic) = &self.air_purifier.percentage_state_topic {
-                    _client.publish(pct_topic, pinned.to_string()).await?;
-                }
+                let pct_topic = self.air_purifier.percentage_state_topic.as_ref().unwrap();
+                _client.publish(pct_topic, pinned.to_string()).await?;
             }
             return Ok(());
         }

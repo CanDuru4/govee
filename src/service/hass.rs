@@ -635,14 +635,28 @@ async fn mqtt_fan_percentage_command(
         }
 
         // Apply step
-        let _ = match step {
-            1 => gear_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 1)),
-            2 => gear_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 2)),
-            3 => gear_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 3)),
-            _ => custom_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 0)),
+        match step {
+            1 => {
+                if let Some(idn) = gear_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 1).await;
+                }
+            }
+            2 => {
+                if let Some(idn) = gear_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 2).await;
+                }
+            }
+            3 => {
+                if let Some(idn) = gear_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 3).await;
+                }
+            }
+            _ => {
+                if let Some(idn) = custom_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 0).await;
+                }
+            }
         }
-        .transpose()
-        .await;
 
         // Mirror state optimistically
         if let Some(client) = state2.get_hass_client().await {
@@ -653,6 +667,12 @@ async fn mqtt_fan_percentage_command(
                     step_to_pct(step).to_string(),
                 )
                 .await;
+        }
+
+        // Trim debounce entry for this id
+        {
+            let mut map = FAN_DEBOUNCE.lock().await;
+            map.remove(&id2);
         }
     });
 

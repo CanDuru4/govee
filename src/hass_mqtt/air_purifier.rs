@@ -7,7 +7,6 @@ use crate::service::hass::{availability_topic, topic_safe_id, HassClient};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use serde::Serialize;
-use serde_json::json;
 
 /// <https://www.home-assistant.io/integrations/fan.mqtt>
 #[derive(Serialize, Clone, Debug)]

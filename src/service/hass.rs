@@ -25,7 +25,9 @@ const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_s
 
 static FAN_DEBOUNCE: Lazy<TokioMutex<HashMap<String, i64>>> =
     Lazy::new(|| TokioMutex::new(HashMap::new()));
-const FAN_DEBOUNCE_MS: u64 = 250;
+static LAST_CMD_STEP: Lazy<TokioMutex<HashMap<String, u8>>> =
+    Lazy::new(|| TokioMutex::new(HashMap::new()));
+const FAN_DEBOUNCE_MS: u64 = 120;
 
 #[derive(clap::Parser, Debug)]
 pub struct HassArguments {
@@ -565,10 +567,30 @@ async fn mqtt_fan_percentage_command(
     -> anyhow::Result<()>
 {
     let pct: i64 = payload.trim().parse().unwrap_or(0);
+    let step: u8 = pct_to_step(pct);
+
+    // Optimistic UI update immediately
+    if let Some(client) = state.get_hass_client().await {
+        let _ = client
+            .publish(
+                format!("gv2mqtt/fan/{id}/state"),
+                if step == 0 { "OFF" } else { "ON" },
+            )
+            .await;
+        let _ = client
+            .publish(
+                format!("gv2mqtt/fan/{id}/notify-percentage"),
+                step_to_pct(step).to_string(),
+            )
+            .await;
+    }
+
     // Record the latest requested percentage for this device id
     {
         let mut map = FAN_DEBOUNCE.lock().await;
         map.insert(id.clone(), pct);
+        let mut last = LAST_CMD_STEP.lock().await;
+        last.insert(id.clone(), step);
     }
 
     // Debounced worker to coalesce rapid slider updates
@@ -580,7 +602,6 @@ async fn mqtt_fan_percentage_command(
             let map = FAN_DEBOUNCE.lock().await;
             *map.get(&id2).unwrap_or(&0)
         };
-
         let step = pct_to_step(pct_final);
 
         // Resolve device
@@ -601,18 +622,13 @@ async fn mqtt_fan_percentage_command(
             return;
         }
 
-        // Skip redundant mode changes
-        if current_step_from_device(&device) == step {
-            if let Some(client) = state2.get_hass_client().await {
-                let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
-                let _ = client
-                    .publish(
-                        format!("gv2mqtt/fan/{id2}/notify-percentage"),
-                        step_to_pct(step).to_string(),
-                    )
-                    .await;
+        // Coalesce duplicates using last commanded step
+        {
+            let last = LAST_CMD_STEP.lock().await;
+            if last.get(&id2).copied() == Some(step) {
+                // already sent this step; nothing to do
+                return;
             }
-            return;
         }
 
         // Resolve work mode ids

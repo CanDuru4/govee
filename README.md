@@ -4,6 +4,16 @@ This repo provides a `govee` executable whose primary purpose is to act
 as a bridge between [Govee](https://govee.com) devices and Home Assistant,
 via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrations/mqtt/).
 
+## About this fork
+
+This project is derived from and heavily based on the upstream project
+[wez/govee2mqtt](https://github.com/wez/govee2mqtt). This fork adds support and
+enhancements specifically for the Govee H7126 air purifier.
+
+The upstream project by Wez is excellent and remains the canonical source for
+broader device support and documentation. Please consider starring and supporting
+the upstream project if you find this useful.
+
 ## Features
 
 * Robust LAN-first design. Not all of Govee's devices support LAN control,
@@ -32,6 +42,12 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 * `LAN` means that you have enabled the [Govee LAN API](https://app-h5.govee.com/user-manual/wlan-guide)
   on supported devices and that the LAN API protocol is functional on your network
 
+### H7126 Air Purifier additions in this fork
+
+This fork focuses on adding support for the Govee H7126 air purifier. It
+enables Home Assistant discovery and control via MQTT for the H7126 model.
+Additional improvements may be included over time.
+
 ## Usage
 
 * [Installing the HASS Add-On](docs/ADDON.md) - for HAOS and Supervised HASS users
@@ -43,15 +59,6 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 * [Is my device supported?](docs/SKUS.md)
 * [Check out the FAQ](docs/FAQ.md)
 
-## Want to show your support or gratitude?
-
-It takes significant effort to build, maintain and support users of software
-like this. If you can spare something to say thanks, it is appreciated!
-
-* [Sponsor me on Github](https://github.com/sponsors/wez)
-* [Sponsor me on Patreon](https://patreon.com/WezFurlong)
-* [Sponsor me on Ko-Fi](https://ko-fi.com/wezfurlong)
-* [Sponsor me via liberapay](https://liberapay.com/wez)
 
 ## Credits
 
@@ -60,4 +67,12 @@ Control](https://github.com/wez/govee-lan-hass/).
 
 The AWS IoT support was made possible by the work of @bwp91 in
 [homebridge-govee](https://github.com/bwp91/homebridge-govee/).
+
+## Attribution & License
+
+This project is based on and includes substantial portions of
+[wez/govee2mqtt](https://github.com/wez/govee2mqtt), which is licensed under the
+MIT License. This fork keeps the same MIT License. See `LICENSE.md` for the
+full text. All original copyrights remain with their respective owners; any
+modifications in this fork are provided under the same MIT terms.
 

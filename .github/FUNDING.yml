@@ -1,4 +1,7 @@
-github: wez
-patreon: WezFurlong
-ko_fi: wezfurlong
-liberapay: wez
+#
+# Funding is intentionally disabled for this fork.
+# Leaving this file present but with no providers disables the Sponsor box.
+github: []
+patreon: []
+ko_fi: []
+liberapay: []

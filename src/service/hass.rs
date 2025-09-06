@@ -13,12 +13,19 @@ use crate::temperature::TemperatureScale;
 use anyhow::Context;
 use async_channel::Receiver;
 use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::sync::Mutex as TokioMutex;
 use mosquitto_rs::{Client, Event, QoS};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
 
 const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(15);
+
+static FAN_DEBOUNCE: Lazy<TokioMutex<HashMap<String, i64>>> =
+    Lazy::new(|| TokioMutex::new(HashMap::new()));
+const FAN_DEBOUNCE_MS: u64 = 250;
 
 #[derive(clap::Parser, Debug)]
 pub struct HassArguments {
@@ -235,6 +242,61 @@ pub fn purge_cache_topic() -> String {
 #[derive(Deserialize)]
 pub struct IdParameter {
     pub id: String,
+}
+
+// Helper mapping for percentage <-> discrete steps
+fn pct_to_step(p: i64) -> u8 {
+    if p <= 0 {
+        0
+    } else if p <= 25 {
+        1
+    } else if p <= 50 {
+        2
+    } else if p <= 75 {
+        3
+    } else {
+        4
+    }
+}
+
+fn step_to_pct(s: u8) -> i64 {
+    match s {
+        0 => 0,
+        1 => 25,
+        2 => 50,
+        3 => 75,
+        _ => 100,
+    }
+}
+
+fn current_step_from_device(dev: &ServiceDevice) -> u8 {
+    if let Some(cap) = dev.get_state_capability_by_instance("workMode") {
+        let wm = cap
+            .state
+            .pointer("/value/workMode")
+            .and_then(|v| v.as_i64());
+        let mv = cap
+            .state
+            .pointer("/value/modeValue")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if let Ok(pm) = crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(dev) {
+            let gear = pm.mode_by_name("gearMode").and_then(|m| m.value.as_i64());
+            let custom = pm
+                .modes
+                .values()
+                .find(|m| m.name.eq_ignore_ascii_case("custom"))
+                .and_then(|m| m.value.as_i64());
+            return match (wm, mv) {
+                (Some(x), 1) if Some(x) == gear => 1,
+                (Some(x), 2) if Some(x) == gear => 2,
+                (Some(x), 3) if Some(x) == gear => 3,
+                (Some(x), _) if Some(x) == custom => 4,
+                _ => 0,
+            };
+        }
+    }
+    0
 }
 
 /// Someone clicked the "Request Platform API State" button
@@ -503,74 +565,96 @@ async fn mqtt_fan_percentage_command(
     -> anyhow::Result<()>
 {
     let pct: i64 = payload.trim().parse().unwrap_or(0);
-    let device = state.resolve_device_for_control(&id).await?;
-
-    // 0 means OFF
-    if pct <= 0 {
-        log::info!("fan pct cmd {} -> OFF", pct);
-        state.device_power_on(&device, false).await?;
-        return Ok(());
+    // Record the latest requested percentage for this device id
+    {
+        let mut map = FAN_DEBOUNCE.lock().await;
+        map.insert(id.clone(), pct);
     }
 
-    // Map percentage to 4 steps: 1=Sleep, 2=Low, 3=High, 4=Custom
-    let step: u8 = if pct <= 25 { 1 } else if pct <= 50 { 2 } else if pct <= 75 { 3 } else { 4 };
-    log::info!("fan pct cmd {} -> step {}", pct, step);
+    // Debounced worker to coalesce rapid slider updates
+    let state2 = state.clone();
+    let id2 = id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(FAN_DEBOUNCE_MS)).await;
+        let pct_final = {
+            let map = FAN_DEBOUNCE.lock().await;
+            *map.get(&id2).unwrap_or(&0)
+        };
 
-    let wm = crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(&device)?;
-    // Resolve work mode ids
-    let gear_mode_id = wm.mode_by_name("gearMode").and_then(|m| m.value.as_i64());
-    let custom_mode_id = wm
-        .modes
-        .values()
-        .find(|m| m.name.eq_ignore_ascii_case("custom"))
-        .and_then(|m| m.value.as_i64());
+        let step = pct_to_step(pct_final);
 
-    // Power ON only if currently OFF, to avoid resetting to Sleep via power-on
-    let was_off = !device.device_state().map(|s| s.on).unwrap_or(false);
-    if was_off {
-        state.device_power_on(&device, true).await?;
-        // Give the device/cloud a brief moment to settle before the mode change
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-    match step {
-        1 => {
-            if let Some(id_num) = gear_mode_id {
-                state.humidifier_set_parameter(&device, id_num, 1).await?;
-            }
-        }
-        2 => {
-            if let Some(id_num) = gear_mode_id {
-                state.humidifier_set_parameter(&device, id_num, 2).await?;
-            }
-        }
-        3 => {
-            if let Some(id_num) = gear_mode_id {
-                state.humidifier_set_parameter(&device, id_num, 3).await?;
-            }
-        }
-        _ => {
-            // Custom uses its own work mode; many devices ignore modeValue here
-            if let Some(id_num) = custom_mode_id {
-                state.humidifier_set_parameter(&device, id_num, 0).await?;
-            }
-        }
-    }
+        // Resolve device
+        let device = match state2.resolve_device_for_control(&id2).await {
+            Ok(d) => d,
+            Err(_) => return,
+        };
 
-    // Mirror state immediately so HA/Home slider moves
-    if let Some(client) = state.get_hass_client().await {
-        let pct_to_report: i64 = match step { 1 => 25, 2 => 50, 3 => 75, 4 => 100, _ => 0 };
-        client
-            .publish(format!("gv2mqtt/fan/{}/state", id), "ON")
-            .await
-            .ok();
-        client
-            .publish(
-                format!("gv2mqtt/fan/{}/notify-percentage", id),
-                pct_to_report.to_string(),
-            )
-            .await
-            .ok();
-    }
+        // OFF shortcut
+        if step == 0 {
+            let _ = state2.device_power_on(&device, false).await;
+            if let Some(client) = state2.get_hass_client().await {
+                let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "OFF").await;
+                let _ = client
+                    .publish(format!("gv2mqtt/fan/{id2}/notify-percentage"), "0")
+                    .await;
+            }
+            return;
+        }
+
+        // Skip redundant mode changes
+        if current_step_from_device(&device) == step {
+            if let Some(client) = state2.get_hass_client().await {
+                let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
+                let _ = client
+                    .publish(
+                        format!("gv2mqtt/fan/{id2}/notify-percentage"),
+                        step_to_pct(step).to_string(),
+                    )
+                    .await;
+            }
+            return;
+        }
+
+        // Resolve work mode ids
+        let wm = match crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(&device) {
+            Ok(wm) => wm,
+            Err(_) => return,
+        };
+        let gear_mode_id = wm.mode_by_name("gearMode").and_then(|m| m.value.as_i64());
+        let custom_mode_id = wm
+            .modes
+            .values()
+            .find(|m| m.name.eq_ignore_ascii_case("custom"))
+            .and_then(|m| m.value.as_i64());
+
+        // Power ON only if OFF
+        let was_off = !device.device_state().map(|s| s.on).unwrap_or(false);
+        if was_off {
+            let _ = state2.device_power_on(&device, true).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        }
+
+        // Apply step
+        let _ = match step {
+            1 => gear_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 1)),
+            2 => gear_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 2)),
+            3 => gear_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 3)),
+            _ => custom_mode_id.map(|idn| state2.humidifier_set_parameter(&device, idn, 0)),
+        }
+        .transpose()
+        .await;
+
+        // Mirror state optimistically
+        if let Some(client) = state2.get_hass_client().await {
+            let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
+            let _ = client
+                .publish(
+                    format!("gv2mqtt/fan/{id2}/notify-percentage"),
+                    step_to_pct(step).to_string(),
+                )
+                .await;
+        }
+    });
 
     Ok(())
 }

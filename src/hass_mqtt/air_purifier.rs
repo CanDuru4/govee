@@ -28,12 +28,11 @@ pub struct AirPurifierConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed_range_max: Option<i64>,
 
-    /// HASS will publish here to change the current mode
-    pub preset_mode_command_topic: String,
-    /// we will publish the current mode here
-    pub preset_mode_state_topic: String,
-
-    /// The list of supported preset modes
+    /// Optional preset mode topics/modes; omitted for purifier slider-only UX
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset_mode_command_topic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset_mode_state_topic: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub preset_modes: Vec<String>,
 
@@ -68,14 +67,9 @@ impl AirPurifier {
 
         let state_topic = format!("gv2mqtt/fan/{id}/state", id = topic_safe_id(device));
 
-        let preset_mode_command_topic = format!(
-            "gv2mqtt/fan/{id}/set-preset-mode",
-            id = topic_safe_id(device)
-        );
-        let preset_mode_state_topic = format!(
-            "gv2mqtt/fan/{id}/notify-preset-mode",
-            id = topic_safe_id(device)
-        );
+        // We intentionally omit preset mode topics for purifier to keep slider-only UI
+        let preset_mode_command_topic: Option<String> = None;
+        let preset_mode_state_topic: Option<String> = None;
 
         // Percentage topics for speed/gearMode control
         let percentage_command_topic = format!(
@@ -89,40 +83,10 @@ impl AirPurifier {
 
         let unique_id = format!("gv2mqtt-{id}-fan", id = topic_safe_id(device));
 
-        let work_mode = ParsedWorkMode::with_device(device).ok();
-        // Only include non-range modes as presets (e.g. Auto/Custom). Skip gearMode
-        let preset_modes = work_mode
-            .as_ref()
-            .map(|wm| {
-                wm.modes
-                    .values()
-                    .filter(|m| m.should_show_as_preset())
-                    .map(|m| m.name.to_string())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_else(|| vec![]);
-
-        // Determine optional speed range from a mode that has a contiguous range
-        let mut speed_range_min: Option<i64> = None;
-        let mut speed_range_max: Option<i64> = None;
-        if let Some(wm) = &work_mode {
-            // Prefer gearMode when present
-            if let Some(gear) = wm.mode_by_name("gearMode") {
-                if let Some(r) = gear.contiguous_value_range() {
-                    speed_range_min.replace(r.start);
-                    speed_range_max.replace(r.end - 1);
-                }
-            } else {
-                // Or any other contiguous range mode
-                for mode in wm.modes.values() {
-                    if let Some(r) = mode.contiguous_value_range() {
-                        speed_range_min.replace(r.start);
-                        speed_range_max.replace(r.end - 1);
-                        break;
-                    }
-                }
-            }
-        }
+        // No presets; we expose a simple 4-step slider (1..4)
+        let preset_modes: Vec<String> = vec![];
+        let speed_range_min: Option<i64> = Some(1);
+        let speed_range_max: Option<i64> = Some(4);
 
         Ok(Self {
             air_purifier: AirPurifierConfig {
@@ -142,8 +106,8 @@ impl AirPurifier {
                 },
                 command_topic,
                 state_topic,
-                percentage_command_topic: speed_range_min.map(|_| percentage_command_topic),
-                percentage_state_topic: speed_range_min.map(|_| percentage_state_topic),
+                percentage_command_topic: Some(percentage_command_topic),
+                percentage_state_topic: Some(percentage_state_topic),
                 speed_range_min,
                 speed_range_max,
                 preset_mode_command_topic,
@@ -164,7 +128,7 @@ impl EntityInstance for AirPurifier {
     }
 
     async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
-        // Publish current power and preset mode state for the fan entity
+        // Publish current power and percentage (mapped 0,25,50,75,100)
         let device = self
             .state
             .device_by_id(&self.device_id)
@@ -172,31 +136,59 @@ impl EntityInstance for AirPurifier {
             .expect("device to exist");
 
         if let Some(device_state) = device.device_state() {
+            let on = device_state.on;
             _client
-                .publish(
-                    &self.air_purifier.state_topic,
-                    if device_state.on { "ON" } else { "OFF" },
-                )
+                .publish(&self.air_purifier.state_topic, if on { "ON" } else { "OFF" })
                 .await?;
-        }
 
-        // Try to determine the current mode and publish it
-        let mut current_mode_num = device.humidifier_work_mode.map(|v| v as i64);
-        if current_mode_num.is_none() {
-            if let Some(cap) = device.get_state_capability_by_instance("workMode") {
-                if let Some(mode_num) = cap.state.pointer("/value/workMode").and_then(|v| v.as_i64()) {
-                    current_mode_num.replace(mode_num);
-                }
-            }
-        }
+            if let Some(pct_topic) = &self.air_purifier.percentage_state_topic {
+                // Determine step from (workMode, modeValue)
+                let mut step: u8 = 0; // 0=Off
+                if on {
+                    let mut work_mode_id: Option<i64> = None;
+                    let mut mode_value: Option<i64> = None;
+                    if let Some(cap) = device.get_state_capability_by_instance("workMode") {
+                        work_mode_id = cap
+                            .state
+                            .pointer("/value/workMode")
+                            .and_then(|v| v.as_i64());
+                        mode_value = cap
+                            .state
+                            .pointer("/value/modeValue")
+                            .and_then(|v| v.as_i64());
+                    }
 
-        if let Some(mode_num) = current_mode_num {
-            if let Ok(work_modes) = ParsedWorkMode::with_device(&device) {
-                if let Some(mode) = work_modes.mode_for_value(&json!(mode_num)) {
-                    _client
-                        .publish(&self.air_purifier.preset_mode_state_topic, mode.name.to_string())
-                        .await?;
+                    if let (Some(wm_id), Ok(wm)) = (work_mode_id, ParsedWorkMode::with_device(&device)) {
+                        let gear_id = wm.mode_by_name("gearMode").and_then(|m| m.value.as_i64());
+                        let custom_id = wm
+                            .modes
+                            .values()
+                            .find(|m| m.name.eq_ignore_ascii_case("custom"))
+                            .and_then(|m| m.value.as_i64());
+
+                        if Some(wm_id) == gear_id {
+                            // use mode_value 1..3
+                            let mv = mode_value.unwrap_or(1);
+                            step = match mv {
+                                1 => 1,
+                                2 => 2,
+                                3 => 3,
+                                _ => 1,
+                            };
+                        } else if Some(wm_id) == custom_id {
+                            step = 4;
+                        }
+                    }
                 }
+
+                let pct = match step {
+                    0 => 0,
+                    1 => 25,
+                    2 => 50,
+                    3 => 75,
+                    _ => 100,
+                };
+                _client.publish(pct_topic, pct.to_string()).await?;
             }
         }
 

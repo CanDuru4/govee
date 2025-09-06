@@ -494,6 +494,64 @@ async fn mqtt_fan_preset_mode_command(
     Ok(())
 }
 
+/// HASS is sending a fan percentage command
+async fn mqtt_fan_percentage_command(
+    Payload(payload): Payload<String>,
+    Params(IdParameter { id }): Params<IdParameter>,
+    State(state): State<StateHandle>,
+)
+    -> anyhow::Result<()>
+{
+    let mut pct: i64 = payload.trim().parse().unwrap_or(0);
+    let device = state.resolve_device_for_control(&id).await?;
+
+    // 0 means OFF
+    if pct <= 0 {
+        log::info!("fan cmd pct -> {} (step 0 / OFF)", pct);
+        state.device_power_on(&device, false).await?;
+        return Ok(());
+    }
+
+    // Map percentage to 4 steps: 1=Sleep, 2=Low, 3=High, 4=Custom
+    let step: u8 = if pct <= 25 { 1 } else if pct <= 50 { 2 } else if pct <= 75 { 3 } else { 4 };
+
+    let wm = crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(&device)?;
+    // Resolve work mode ids
+    let gear_mode_id = wm.mode_by_name("gearMode").and_then(|m| m.value.as_i64());
+    let custom_mode_id = wm
+        .modes
+        .values()
+        .find(|m| m.name.eq_ignore_ascii_case("custom"))
+        .and_then(|m| m.value.as_i64());
+
+    state.device_power_on(&device, true).await?;
+    match step {
+        1 => {
+            if let Some(id_num) = gear_mode_id {
+                state.humidifier_set_parameter(&device, id_num, 1).await?;
+            }
+        }
+        2 => {
+            if let Some(id_num) = gear_mode_id {
+                state.humidifier_set_parameter(&device, id_num, 2).await?;
+            }
+        }
+        3 => {
+            if let Some(id_num) = gear_mode_id {
+                state.humidifier_set_parameter(&device, id_num, 3).await?;
+            }
+        }
+        _ => {
+            // Custom uses its own work mode; many devices ignore modeValue here
+            if let Some(id_num) = custom_mode_id {
+                state.humidifier_set_parameter(&device, id_num, 0).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn mired_to_kelvin(mired: u32) -> u32 {
     if mired == 0 {
         0
@@ -562,6 +620,9 @@ async fn run_mqtt_loop(
             .await?;
         router
             .route("gv2mqtt/fan/:id/set-preset-mode", mqtt_fan_preset_mode_command)
+            .await?;
+        router
+            .route("gv2mqtt/fan/:id/set-percentage", mqtt_fan_percentage_command)
             .await?;
 
         router.route(oneclick_topic(), mqtt_oneclick).await?;

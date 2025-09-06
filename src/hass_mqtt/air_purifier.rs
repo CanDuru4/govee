@@ -7,6 +7,7 @@ use crate::service::hass::{availability_topic, topic_safe_id, HassClient};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use serde::Serialize;
+use serde_json::json;
 
 /// <https://www.home-assistant.io/integrations/fan.mqtt>
 #[derive(Serialize, Clone, Debug)]
@@ -110,7 +111,42 @@ impl EntityInstance for AirPurifier {
     }
 
     async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
-        // State notifications are handled by the individual capability handlers
+        // Publish current power and preset mode state for the fan entity
+        let device = self
+            .state
+            .device_by_id(&self.device_id)
+            .await
+            .expect("device to exist");
+
+        if let Some(device_state) = device.device_state() {
+            _client
+                .publish(
+                    &self.air_purifier.state_topic,
+                    if device_state.on { "ON" } else { "OFF" },
+                )
+                .await?;
+        }
+
+        // Try to determine the current mode and publish it
+        let mut current_mode_num = device.humidifier_work_mode.map(|v| v as i64);
+        if current_mode_num.is_none() {
+            if let Some(cap) = device.get_state_capability_by_instance("workMode") {
+                if let Some(mode_num) = cap.state.pointer("/value/workMode").and_then(|v| v.as_i64()) {
+                    current_mode_num.replace(mode_num);
+                }
+            }
+        }
+
+        if let Some(mode_num) = current_mode_num {
+            if let Ok(work_modes) = ParsedWorkMode::with_device(&device) {
+                if let Some(mode) = work_modes.mode_for_value(&json!(mode_num)) {
+                    _client
+                        .publish(&self.air_purifier.preset_mode_state_topic, mode.name.to_string())
+                        .await?;
+                }
+            }
+        }
+
         Ok(())
     }
 

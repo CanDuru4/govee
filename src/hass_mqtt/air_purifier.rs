@@ -109,7 +109,7 @@ impl EntityInstance for AirPurifier {
         self.air_purifier.publish(state, client).await
     }
 
-    async fn notify_state(&self, _state: &StateHandle, _client: &HassClient) -> anyhow::Result<()> {
+    async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
         // State notifications are handled by the individual capability handlers
         Ok(())
     }

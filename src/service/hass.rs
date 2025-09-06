@@ -10,7 +10,7 @@ use crate::platform_api::{from_json, DeviceType};
 use crate::service::device::Device as ServiceDevice;
 use crate::service::state::StateHandle;
 use crate::temperature::TemperatureScale;
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use async_channel::Receiver;
 use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
 use mosquitto_rs::{Client, Event, QoS};
@@ -487,9 +487,9 @@ async fn mqtt_fan_preset_mode_command(
     let value = work_mode.default_value();
 
     state
-        .device_set_work_mode(&device, &mode, mode_num, value)
+        .humidifier_set_parameter(&device, mode_num, value)
         .await
-        .context("mqtt_fan_preset_mode_command: device_set_work_mode")?;
+        .context("mqtt_fan_preset_mode_command: humidifier_set_parameter")?;
     
     Ok(())
 }

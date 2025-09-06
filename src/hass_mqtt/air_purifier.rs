@@ -24,6 +24,8 @@ pub struct AirPurifierConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub percentage_state_topic: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub percentage_step: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub speed_range_min: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed_range_max: Option<i64>,
@@ -108,6 +110,7 @@ impl AirPurifier {
                 state_topic,
                 percentage_command_topic: Some(percentage_command_topic),
                 percentage_state_topic: Some(percentage_state_topic),
+                percentage_step: Some(25),
                 speed_range_min,
                 speed_range_max,
                 preset_mode_command_topic,

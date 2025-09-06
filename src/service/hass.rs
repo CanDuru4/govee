@@ -549,6 +549,22 @@ async fn mqtt_fan_percentage_command(
         }
     }
 
+    // Mirror state immediately so HA/Home slider moves
+    if let Some(client) = state.get_hass_client().await {
+        let pct_to_report: i64 = match step { 1 => 25, 2 => 50, 3 => 75, 4 => 100, _ => 0 };
+        client
+            .publish(format!("gv2mqtt/fan/{}/state", id), "ON")
+            .await
+            .ok();
+        client
+            .publish(
+                format!("gv2mqtt/fan/{}/notify-percentage", id),
+                pct_to_report.to_string(),
+            )
+            .await
+            .ok();
+    }
+
     Ok(())
 }
 

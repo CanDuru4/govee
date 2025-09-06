@@ -25,8 +25,6 @@ const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_s
 
 static FAN_DEBOUNCE: Lazy<TokioMutex<HashMap<String, i64>>> =
     Lazy::new(|| TokioMutex::new(HashMap::new()));
-static LAST_CMD_STEP: Lazy<TokioMutex<HashMap<String, u8>>> =
-    Lazy::new(|| TokioMutex::new(HashMap::new()));
 const FAN_DEBOUNCE_MS: u64 = 120;
 
 #[derive(clap::Parser, Debug)]
@@ -589,8 +587,6 @@ async fn mqtt_fan_percentage_command(
     {
         let mut map = FAN_DEBOUNCE.lock().await;
         map.insert(id.clone(), pct);
-        let mut last = LAST_CMD_STEP.lock().await;
-        last.insert(id.clone(), step);
     }
 
     // Debounced worker to coalesce rapid slider updates
@@ -622,14 +618,7 @@ async fn mqtt_fan_percentage_command(
             return;
         }
 
-        // Coalesce duplicates using last commanded step
-        {
-            let last = LAST_CMD_STEP.lock().await;
-            if last.get(&id2).copied() == Some(step) {
-                // already sent this step; nothing to do
-                return;
-            }
-        }
+        // No duplicate coalescing based on stale state; debounce already collapses rapid updates
 
         // Resolve work mode ids
         let wm = match crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(&device) {

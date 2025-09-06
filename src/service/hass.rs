@@ -639,14 +639,24 @@ async fn mqtt_fan_percentage_command(
         let state_clone = state.clone();
         let id_clone = id.clone();
         tokio::spawn(async move {
-            for _ in 0..8 {
+            // Echo pinned values during the stabilization window
+            for _ in 0..20 { // ~8s at 400ms
                 if !fan_in_stabilize_window(&id_clone).await { break; }
                 if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&id_clone).await) {
                     let _ = client
-                        .publish(format!("gv2mqtt/fan/{id_clone}/notify-percentage"), pinned.to_string())
+                        .publish(
+                            format!("gv2mqtt/fan/{id_clone}/state"),
+                            if pinned > 0 { "ON" } else { "OFF" },
+                        )
+                        .await;
+                    let _ = client
+                        .publish(
+                            format!("gv2mqtt/fan/{id_clone}/notify-percentage"),
+                            pinned.to_string(),
+                        )
                         .await;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
             }
         });
     }

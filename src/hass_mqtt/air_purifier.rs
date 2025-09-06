@@ -3,7 +3,9 @@ use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::platform_api::DeviceType;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, topic_safe_id, HassClient};
+use crate::service::hass::{
+    availability_topic, topic_safe_id, HassClient, fan_in_stabilize_window, fan_pinned_pct,
+};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use serde::Serialize;
@@ -50,7 +52,8 @@ impl AirPurifierConfig {
 pub struct AirPurifier {
     air_purifier: AirPurifierConfig,
     state: StateHandle,
-    device_id: String,
+    device_id: String, // raw id for state lookups
+    topic_id: String,  // sanitized id used in MQTT topics & stabilizer keys
 }
 
 impl AirPurifier {
@@ -89,6 +92,8 @@ impl AirPurifier {
         let speed_range_min: Option<i64> = None;
         let speed_range_max: Option<i64> = None;
 
+        let topic_id = topic_safe_id(device);
+
         Ok(Self {
             air_purifier: AirPurifierConfig {
                 base: EntityConfig {
@@ -118,6 +123,7 @@ impl AirPurifier {
                 optimistic,
             },
             device_id: device.id.to_string(),
+            topic_id,
             state: state.clone(),
         })
     }
@@ -130,9 +136,16 @@ impl EntityInstance for AirPurifier {
     }
 
     async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
-        // If we're within a post-command stabilization window, skip
-        // publishing real device-origin state to avoid UI flicker
-        if crate::service::hass::fan_in_stabilize_window(&self.device_id).await {
+        // During stabilization, publish the pinned percentage value keyed by topic id
+        if fan_in_stabilize_window(&self.topic_id).await {
+            if let Some(pinned) = fan_pinned_pct(&self.topic_id).await {
+                _client
+                    .publish(&self.air_purifier.state_topic, if pinned > 0 { "ON" } else { "OFF" })
+                    .await?;
+                if let Some(pct_topic) = &self.air_purifier.percentage_state_topic {
+                    _client.publish(pct_topic, pinned.to_string()).await?;
+                }
+            }
             return Ok(());
         }
 

@@ -18,6 +18,16 @@ pub struct AirPurifierConfig {
     pub command_topic: String,
     pub state_topic: String,
 
+    /// Optional percentage slider topics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percentage_command_topic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percentage_state_topic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_range_min: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_range_max: Option<i64>,
+
     /// HASS will publish here to change the current mode
     pub preset_mode_command_topic: String,
     /// we will publish the current mode here
@@ -67,13 +77,52 @@ impl AirPurifier {
             id = topic_safe_id(device)
         );
 
+        // Percentage topics for speed/gearMode control
+        let percentage_command_topic = format!(
+            "gv2mqtt/fan/{id}/set-percentage",
+            id = topic_safe_id(device)
+        );
+        let percentage_state_topic = format!(
+            "gv2mqtt/fan/{id}/notify-percentage",
+            id = topic_safe_id(device)
+        );
+
         let unique_id = format!("gv2mqtt-{id}-fan", id = topic_safe_id(device));
 
         let work_mode = ParsedWorkMode::with_device(device).ok();
+        // Only include non-range modes as presets (e.g. Auto/Custom). Skip gearMode
         let preset_modes = work_mode
             .as_ref()
-            .map(|wm| wm.get_mode_names())
-            .unwrap_or(vec![]);
+            .map(|wm| {
+                wm.modes
+                    .values()
+                    .filter(|m| m.should_show_as_preset())
+                    .map(|m| m.name.to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_else(|| vec![]);
+
+        // Determine optional speed range from a mode that has a contiguous range
+        let mut speed_range_min: Option<i64> = None;
+        let mut speed_range_max: Option<i64> = None;
+        if let Some(wm) = &work_mode {
+            // Prefer gearMode when present
+            if let Some(gear) = wm.mode_by_name("gearMode") {
+                if let Some(r) = gear.contiguous_value_range() {
+                    speed_range_min.replace(r.start);
+                    speed_range_max.replace(r.end - 1);
+                }
+            } else {
+                // Or any other contiguous range mode
+                for mode in wm.modes.values() {
+                    if let Some(r) = mode.contiguous_value_range() {
+                        speed_range_min.replace(r.start);
+                        speed_range_max.replace(r.end - 1);
+                        break;
+                    }
+                }
+            }
+        }
 
         Ok(Self {
             air_purifier: AirPurifierConfig {
@@ -93,6 +142,10 @@ impl AirPurifier {
                 },
                 command_topic,
                 state_topic,
+                percentage_command_topic: speed_range_min.map(|_| percentage_command_topic),
+                percentage_state_topic: speed_range_min.map(|_| percentage_state_topic),
+                speed_range_min,
+                speed_range_max,
                 preset_mode_command_topic,
                 preset_mode_state_topic,
                 preset_modes,

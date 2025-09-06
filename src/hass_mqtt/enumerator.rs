@@ -86,6 +86,12 @@ async fn entities_for_work_mode<'a>(
     cap: &DeviceCapability,
     entities: &mut EntityList,
 ) -> anyhow::Result<()> {
+    // For air purifiers we surface a single Fan entity that owns
+    // power + presets/speed to keep HomeKit as one accessory.
+    // So don't add buttons, numbers or selects here.
+    if d.device_type() == DeviceType::AirPurifier {
+        return Ok(());
+    }
     let mut work_modes = ParsedWorkMode::with_capability(cap)?;
     work_modes.adjust_for_device(&d.sku);
 

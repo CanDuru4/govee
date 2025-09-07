@@ -615,8 +615,8 @@ async fn mqtt_fan_percentage_command(
     // Begin stabilization window so real-state publishes don't flicker the UI
     let pct_to_show = step_to_pct(step);
     let stab_key = fan_pct_topic_for_id(&id);
-    fan_mark_stabilize(&stab_key, 8).await;
     fan_set_pinned_pct(&stab_key, pct_to_show).await;
+    fan_mark_stabilize(&stab_key, 8).await;
 
     // Optimistic UI update immediately
     if let Some(client) = state.get_hass_client().await {

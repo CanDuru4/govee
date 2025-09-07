@@ -32,6 +32,9 @@ static FAN_STABILIZE_UNTIL: Lazy<TokioMutex<HashMap<String, Instant>>> =
     Lazy::new(|| TokioMutex::new(HashMap::new()));
 static FAN_PINNED_PCT: Lazy<TokioMutex<HashMap<String, i64>>> =
     Lazy::new(|| TokioMutex::new(HashMap::new()));
+// Tracks the latest command epoch per device id to cancel older in-flight tasks
+static FAN_CMD_EPOCH: Lazy<TokioMutex<HashMap<String, u64>>> =
+    Lazy::new(|| TokioMutex::new(HashMap::new()));
 
 pub async fn fan_mark_stabilize(id: &str, secs: u64) {
     let mut m = FAN_STABILIZE_UNTIL.lock().await;
@@ -65,6 +68,18 @@ pub async fn fan_clear_stabilize(id: &str) {
         let mut p = FAN_PINNED_PCT.lock().await;
         p.remove(id);
     }
+}
+
+async fn fan_bump_epoch(id: &str) -> u64 {
+    let mut m = FAN_CMD_EPOCH.lock().await;
+    let next = m.get(id).copied().unwrap_or(0) + 1;
+    m.insert(id.to_string(), next);
+    next
+}
+
+async fn fan_current_epoch(id: &str) -> u64 {
+    let m = FAN_CMD_EPOCH.lock().await;
+    m.get(id).copied().unwrap_or(0)
 }
 
 #[derive(clap::Parser, Debug)]
@@ -560,6 +575,20 @@ async fn mqtt_switch_command(
 
     if instance == "powerSwitch" {
         state.device_power_on(&device, on).await?;
+        // If user turned the fan OFF via the power button, clear any active
+        // stabilization and drive the slider to 0 immediately.
+        if !on {
+            let stab_key = fan_pct_topic_for_id(&id);
+            fan_clear_stabilize(&stab_key).await;
+            if let Some(client) = state.get_hass_client().await {
+                let _ = client
+                    .publish(format!("gv2mqtt/fan/{id}/state"), "OFF")
+                    .await;
+                let _ = client
+                    .publish(stab_key, "0")
+                    .await;
+            }
+        }
     } else if let Some(client) = state.get_platform_client().await {
         if let Some(http_dev) = &device.http_device_info {
             client.set_toggle_state(http_dev, &instance, on).await?;
@@ -609,14 +638,21 @@ async fn mqtt_fan_percentage_command(
 )
     -> anyhow::Result<()>
 {
+    use std::time::Duration;
+
     let pct: i64 = payload.trim().parse().unwrap_or(0).clamp(0, 100);
     let step: u8 = pct_to_step(pct);
-
-    // We'll stabilize after we actually apply the step
-    let pct_to_show = step_to_pct(step);
     let stab_key = fan_pct_topic_for_id(&id);
 
-    // Optimistic UI update immediately
+    // ➊ Bump epoch so older in-flight workers auto-cancel
+    let epoch = fan_bump_epoch(&id).await;
+
+    // ➋ Pre-pin to commanded step and open a short stabilize window
+    let pinned = step_to_pct(step);
+    fan_set_pinned_pct(&stab_key, pinned).await;
+    fan_mark_stabilize(&stab_key, 4).await; // tweak 3–5s to taste
+
+    // Immediate optimistic publish
     if let Some(client) = state.get_hass_client().await {
         let _ = client
             .publish(
@@ -624,23 +660,27 @@ async fn mqtt_fan_percentage_command(
                 if step == 0 { "OFF" } else { "ON" },
             )
             .await;
-        let _ = client.publish(stab_key.clone(), step_to_pct(step).to_string()).await;
+        let _ = client.publish(stab_key.clone(), pinned.to_string()).await;
     }
 
-    // Record the latest requested percentage for this device id
+    // Record latest requested percentage
     {
         let mut map = FAN_DEBOUNCE.lock().await;
         map.insert(id.clone(), pct);
     }
 
-    // (Echo loop is started after we stabilize in the worker)
-
-    // Debounced worker to coalesce rapid slider updates
+    // Debounced worker to coalesce rapid slider/keyboard updates
     let state2 = state.clone();
     let id2 = id.clone();
     let stab_key2 = stab_key.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_millis(FAN_DEBOUNCE_MS)).await;
+        tokio::time::sleep(Duration::from_millis(FAN_DEBOUNCE_MS)).await;
+
+        // Cancel if a newer command arrived
+        if fan_current_epoch(&id2).await != epoch {
+            return;
+        }
+
         let pct_final = {
             let map = FAN_DEBOUNCE.lock().await;
             *map.get(&id2).unwrap_or(&0)
@@ -660,17 +700,13 @@ async fn mqtt_fan_percentage_command(
                 let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "OFF").await;
                 let _ = client.publish(stab_key2.clone(), "0").await;
             }
-            // cleanup debounce entry to avoid stale values
             {
                 let mut map = FAN_DEBOUNCE.lock().await;
                 map.remove(&id2);
             }
-            // Clear any existing stabilization window/pin for this topic
             fan_clear_stabilize(&stab_key2).await;
             return;
         }
-
-        // No duplicate coalescing based on stale state; debounce already collapses rapid updates
 
         // Resolve work mode ids
         let wm = match crate::hass_mqtt::work_mode::ParsedWorkMode::with_device(&device) {
@@ -688,71 +724,38 @@ async fn mqtt_fan_percentage_command(
         let was_off = !device.device_state().map(|s| s.on).unwrap_or(false);
         if was_off {
             let _ = state2.device_power_on(&device, true).await;
-            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
 
-        // Apply step and remember which one we commanded
-        let mut applied_step: u8 = step;
+        // Apply step
         match step {
-            1 => {
-                if let Some(idn) = gear_mode_id {
-                    let _ = state2.humidifier_set_parameter(&device, idn, 1).await;
-                    applied_step = 1;
-                }
-            }
-            2 => {
-                if let Some(idn) = gear_mode_id {
-                    let _ = state2.humidifier_set_parameter(&device, idn, 2).await;
-                    applied_step = 2;
-                }
-            }
-            3 => {
-                if let Some(idn) = gear_mode_id {
-                    let _ = state2.humidifier_set_parameter(&device, idn, 3).await;
-                    applied_step = 3;
-                }
-            }
-            _ => {
-                if let Some(idn) = custom_mode_id {
-                    let _ = state2.humidifier_set_parameter(&device, idn, 0).await;
-                    applied_step = 4; // custom => 100%
-                }
-            }
+            1 => if let Some(idn) = gear_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 1).await; },
+            2 => if let Some(idn) = gear_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 2).await; },
+            3 => if let Some(idn) = gear_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 3).await; },
+            _ => if let Some(idn) = custom_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 0).await; }, // custom => 100%
         }
 
-        // Stabilize to the percentage for the applied step
-        let pct_show = step_to_pct(applied_step);
-        fan_set_pinned_pct(&stab_key2, pct_show).await;
-        fan_mark_stabilize(&stab_key2, 8).await;
+        // Re-check epoch before publishing final mirror
+        if fan_current_epoch(&id2).await != epoch {
+            return;
+        }
 
-        // Mirror state optimistically with pinned value
+        // Short re-pin to ride out platform lag
+        let pct_show = step_to_pct(step);
+        fan_set_pinned_pct(&stab_key2, pct_show).await;
+        fan_mark_stabilize(&stab_key2, 3).await;
+
         if let Some(client) = state2.get_hass_client().await {
             let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
             let _ = client.publish(stab_key2.clone(), pct_show.to_string()).await;
         }
 
-        // Optionally echo pinned value during stabilize window
-        let state_clone = state2.clone();
-        let id_clone = id2.clone();
-        let stab_key_clone = stab_key2.clone();
-        tokio::spawn(async move {
-            for _ in 0..20 {
-                if !fan_in_stabilize_window(&stab_key_clone).await { break; }
-                if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&stab_key_clone).await) {
-                    let _ = client.publish(format!("gv2mqtt/fan/{id_clone}/state"), if pinned > 0 { "ON" } else { "OFF" }).await;
-                    let _ = client.publish(stab_key_clone.clone(), pinned.to_string()).await;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-            }
-        });
-
-        // Trim debounce entry for this id
+        // Cleanup debounce
         {
             let mut map = FAN_DEBOUNCE.lock().await;
             map.remove(&id2);
         }
-
-        // Do not clear stabilize window here; let it expire naturally
+        // Let stabilize window expire naturally (no periodic echo loop)
     });
 
     Ok(())

@@ -612,11 +612,9 @@ async fn mqtt_fan_percentage_command(
     let pct: i64 = payload.trim().parse().unwrap_or(0).clamp(0, 100);
     let step: u8 = pct_to_step(pct);
 
-    // Begin stabilization window so real-state publishes don't flicker the UI
+    // We'll stabilize after we actually apply the step
     let pct_to_show = step_to_pct(step);
     let stab_key = fan_pct_topic_for_id(&id);
-    fan_mark_stabilize(&stab_key, 8).await;
-    fan_set_pinned_pct(&stab_key, pct_to_show).await;
 
     // Optimistic UI update immediately
     if let Some(client) = state.get_hass_client().await {
@@ -635,34 +633,12 @@ async fn mqtt_fan_percentage_command(
         map.insert(id.clone(), pct);
     }
 
-    // Optionally echo pinned percentage during stabilize window
-    {
-        let state_clone = state.clone();
-        let id_clone = id.clone();
-        let stab_key_clone = stab_key.clone();
-        tokio::spawn(async move {
-            // Echo pinned values during the stabilization window
-            for _ in 0..20 { // ~8s at 400ms
-                if !fan_in_stabilize_window(&stab_key_clone).await { break; }
-                if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&stab_key_clone).await) {
-                    let _ = client
-                        .publish(
-                            format!("gv2mqtt/fan/{id_clone}/state"),
-                            if pinned > 0 { "ON" } else { "OFF" },
-                        )
-                        .await;
-                    let _ = client
-                        .publish(stab_key_clone.clone(), pinned.to_string())
-                        .await;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-            }
-        });
-    }
+    // (Echo loop is started after we stabilize in the worker)
 
     // Debounced worker to coalesce rapid slider updates
     let state2 = state.clone();
     let id2 = id.clone();
+    let stab_key2 = stab_key.clone();
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(FAN_DEBOUNCE_MS)).await;
         let pct_final = {
@@ -682,15 +658,15 @@ async fn mqtt_fan_percentage_command(
             let _ = state2.device_power_on(&device, false).await;
             if let Some(client) = state2.get_hass_client().await {
                 let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "OFF").await;
-                let _ = client.publish(fan_pct_topic_for_id(&id2), "0").await;
+                let _ = client.publish(stab_key2.clone(), "0").await;
             }
             // cleanup debounce entry to avoid stale values
             {
                 let mut map = FAN_DEBOUNCE.lock().await;
                 map.remove(&id2);
             }
-            // Optionally clear the stabilize window; comment this out if you prefer to hold
-            // fan_clear_stabilize(&fan_pct_topic_for_id(&id2)).await;
+            // Clear any existing stabilization window/pin for this topic
+            fan_clear_stabilize(&stab_key2).await;
             return;
         }
 
@@ -715,35 +691,60 @@ async fn mqtt_fan_percentage_command(
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
 
-        // Apply step
+        // Apply step and remember which one we commanded
+        let mut applied_step: u8 = step;
         match step {
             1 => {
                 if let Some(idn) = gear_mode_id {
                     let _ = state2.humidifier_set_parameter(&device, idn, 1).await;
+                    applied_step = 1;
                 }
             }
             2 => {
                 if let Some(idn) = gear_mode_id {
                     let _ = state2.humidifier_set_parameter(&device, idn, 2).await;
+                    applied_step = 2;
                 }
             }
             3 => {
                 if let Some(idn) = gear_mode_id {
                     let _ = state2.humidifier_set_parameter(&device, idn, 3).await;
+                    applied_step = 3;
                 }
             }
             _ => {
                 if let Some(idn) = custom_mode_id {
                     let _ = state2.humidifier_set_parameter(&device, idn, 0).await;
+                    applied_step = 4; // custom => 100%
                 }
             }
         }
 
-        // Mirror state optimistically
+        // Stabilize to the percentage for the applied step
+        let pct_show = step_to_pct(applied_step);
+        fan_set_pinned_pct(&stab_key2, pct_show).await;
+        fan_mark_stabilize(&stab_key2, 8).await;
+
+        // Mirror state optimistically with pinned value
         if let Some(client) = state2.get_hass_client().await {
             let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
-            let _ = client.publish(fan_pct_topic_for_id(&id2), step_to_pct(step).to_string()).await;
+            let _ = client.publish(stab_key2.clone(), pct_show.to_string()).await;
         }
+
+        // Optionally echo pinned value during stabilize window
+        let state_clone = state2.clone();
+        let id_clone = id2.clone();
+        let stab_key_clone = stab_key2.clone();
+        tokio::spawn(async move {
+            for _ in 0..20 {
+                if !fan_in_stabilize_window(&stab_key_clone).await { break; }
+                if let (Some(client), Some(pinned)) = (state_clone.get_hass_client().await, fan_pinned_pct(&stab_key_clone).await) {
+                    let _ = client.publish(format!("gv2mqtt/fan/{id_clone}/state"), if pinned > 0 { "ON" } else { "OFF" }).await;
+                    let _ = client.publish(stab_key_clone.clone(), pinned.to_string()).await;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+            }
+        });
 
         // Trim debounce entry for this id
         {
@@ -751,8 +752,7 @@ async fn mqtt_fan_percentage_command(
             map.remove(&id2);
         }
 
-        // Clear stabilize window and pinned value
-        fan_clear_stabilize(&stab_key).await;
+        // Do not clear stabilize window here; let it expire naturally
     });
 
     Ok(())

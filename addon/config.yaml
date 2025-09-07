@@ -1,6 +1,6 @@
 name: Govee to MQTT Bridge
 image: ghcr.io/canduru4/govee-{arch}
-version: "2025.09.07-60d267ea"
+version: "2025.09.07-dfe91fe2"
 slug: govee2mqtt
 description: Control Govee Devices
 url: https://github.com/CanDuru4/govee

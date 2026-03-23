@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 // <https://github.com/constructorfleet/homebridge-ultimate-govee/blob/main/src/data/clients/RestClient.ts>
 
-const APP_VERSION: &str = "5.6.01";
+const DEFAULT_APP_VERSION: &str = "5.6.01";
 const HALF_DAY: Duration = Duration::from_secs(3600 * 12);
 const ONE_DAY: Duration = Duration::from_secs(86400);
 const ONE_WEEK: Duration = Duration::from_secs(86400 * 7);
@@ -52,9 +52,14 @@ impl<T: std::fmt::Debug> std::ops::Deref for Redacted<T> {
     }
 }
 
-fn user_agent() -> String {
+fn resolve_app_version() -> anyhow::Result<String> {
+    Ok(opt_env_var::<String>("GOVEE_APP_VERSION")?
+        .unwrap_or_else(|| DEFAULT_APP_VERSION.to_string()))
+}
+
+fn user_agent(app_version: &str) -> String {
     format!(
-        "GoveeHome/{APP_VERSION} (com.ihoment.GoVeeSensor; build:2; iOS 16.5.0) Alamofire/5.6.4"
+        "GoveeHome/{app_version} (com.ihoment.GoVeeSensor; build:2; iOS 16.5.0) Alamofire/5.6.4"
     )
 }
 
@@ -165,17 +170,19 @@ impl GoveeUndocumentedApi {
                 allow_stale: false,
             },
             async {
+                let app_version = resolve_app_version()?;
+                let ua = user_agent(&app_version);
                 let response = reqwest::Client::builder()
                     .timeout(Duration::from_secs(30))
                     .build()?
                     .request(Method::GET, "https://app2.govee.com/app/v1/account/iot/key")
                     .header("Authorization", format!("Bearer {token}"))
-                    .header("appVersion", APP_VERSION)
+                    .header("appVersion", app_version.as_str())
                     .header("clientId", &self.client_id)
                     .header("clientType", "1")
                     .header("iotVersion", "0")
                     .header("timestamp", ms_timestamp())
-                    .header("User-Agent", user_agent())
+                    .header("User-Agent", ua)
                     .send()
                     .await?;
 
@@ -200,6 +207,8 @@ impl GoveeUndocumentedApi {
     }
 
     async fn login_account_impl(&self) -> anyhow::Result<CacheComputeResult<LoginAccountResponse>> {
+        let app_version = resolve_app_version()?;
+        let ua = user_agent(&app_version);
         let response = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?
@@ -207,6 +216,13 @@ impl GoveeUndocumentedApi {
                 Method::POST,
                 "https://app2.govee.com/account/rest/account/v1/login",
             )
+            .header("appVersion", app_version.as_str())
+            .header("AppVersion", app_version.as_str())
+            .header("clientId", &self.client_id)
+            .header("clientType", "1")
+            .header("iotVersion", "0")
+            .header("timestamp", ms_timestamp())
+            .header("User-Agent", ua)
             .json(&serde_json::json!({
                 "email": self.email,
                 "password": self.password,
@@ -251,6 +267,8 @@ impl GoveeUndocumentedApi {
     }
 
     pub async fn get_device_list(&self, token: &str) -> anyhow::Result<DevicesResponse> {
+        let app_version = resolve_app_version()?;
+        let ua = user_agent(&app_version);
         let response = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?
@@ -259,12 +277,12 @@ impl GoveeUndocumentedApi {
                 "https://app2.govee.com/device/rest/devices/v1/list",
             )
             .header("Authorization", format!("Bearer {token}"))
-            .header("appVersion", APP_VERSION)
+            .header("appVersion", app_version.as_str())
             .header("clientId", &self.client_id)
             .header("clientType", "1")
             .header("iotVersion", "0")
             .header("timestamp", ms_timestamp())
-            .header("User-Agent", user_agent())
+            .header("User-Agent", ua)
             .send()
             .await?;
 
@@ -352,6 +370,8 @@ impl GoveeUndocumentedApi {
                 allow_stale: true,
             },
             async {
+                let app_version = resolve_app_version()?;
+                let ua = user_agent(&app_version);
                 let response = reqwest::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()?
@@ -361,8 +381,8 @@ impl GoveeUndocumentedApi {
                             "https://app2.govee.com/appsku/v1/light-effect-libraries?sku={sku}"
                         ),
                     )
-                    .header("AppVersion", APP_VERSION)
-                    .header("User-Agent", user_agent())
+                    .header("AppVersion", app_version.as_str())
+                    .header("User-Agent", ua)
                     .send()
                     .await?;
 
@@ -420,6 +440,8 @@ impl GoveeUndocumentedApi {
                 allow_stale: true,
             },
             async {
+                let app_version = resolve_app_version()?;
+                let ua = user_agent(&app_version);
                 let response = reqwest::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()?
@@ -428,12 +450,12 @@ impl GoveeUndocumentedApi {
                         "https://app2.govee.com/bff-app/v1/exec-plat/home",
                     )
                     .header("Authorization", format!("Bearer {community_token}"))
-                    .header("appVersion", APP_VERSION)
+                    .header("appVersion", app_version.as_str())
                     .header("clientId", &self.client_id)
                     .header("clientType", "1")
                     .header("iotVersion", "0")
                     .header("timestamp", ms_timestamp())
-                    .header("User-Agent", user_agent())
+                    .header("User-Agent", ua)
                     .send()
                     .await?;
 

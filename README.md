@@ -56,6 +56,13 @@ Other fork-specific changes:
   after a successful CONNACK, which makes all entities unavailable. See
   [wez/govee2mqtt#659](https://github.com/wez/govee2mqtt/issues/659).
 
+* The `H600B` Smart LED Bulb has a quirk (`Quirk::light("H600B", BULB)`,
+  2700-6500 K). Upstream has none for this SKU, so the bulb fell back to the
+  Platform API for control and to a 5-second-delayed poll for state; that poll
+  returns the *previous* state, which made Home Assistant flicker between the
+  old and the new brightness after every change. With the quirk the bulb uses
+  the AWS IoT path: instant control and push state updates.
+
 ## Usage
 
 * [Installing the HASS Add-On](docs/ADDON.md) - for HAOS and Supervised HASS users

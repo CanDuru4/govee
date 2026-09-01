@@ -121,6 +121,17 @@ impl Quirk {
         self
     }
 
+    /// Set an explicit colour temperature range in Kelvin.
+    ///
+    /// `with_color_temp` assumes the generic 2000-9000 K span. Bulbs such as
+    /// the H600B only cover 2700-6500 K, and advertising more than the
+    /// hardware supports makes Home Assistant send values the bulb clamps
+    /// silently, so the reported and the actual colour drift apart.
+    pub fn with_color_temp_range(mut self, min: u32, max: u32) -> Self {
+        self.color_temp_range = Some((min, max));
+        self
+    }
+
     pub fn with_lan_api(mut self) -> Self {
         self.lan_api_capable = true;
         self
@@ -186,6 +197,10 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::light("H6159", STRIP).with_broken_platform(),
         // <https://github.com/wez/govee2mqtt/issues/152>
         Quirk::light("H6003", BULB).with_broken_platform(),
+        // Smart LED bulb. Without a quirk govee2mqtt has no IoT support flag
+        // for the SKU, falls back to the Platform API for control and to a
+        // delayed state poll that reports the previous state.
+        Quirk::light("H600B", BULB).with_color_temp_range(2700, 6500),
         // <https://github.com/wez/govee2mqtt/issues/40#issuecomment-1889726710>
         // indicates that this one doesn't work like the others with IoT
         Quirk::light("H6121", STRIP).with_iot_api_support(false),

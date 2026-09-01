@@ -48,6 +48,14 @@ This fork focuses on adding support for the Govee H7126 air purifier. It
 enables Home Assistant discovery and control via MQTT for the H7126 model.
 Additional improvements may be included over time.
 
+Other fork-specific changes:
+
+* MQTT client id is `govee2mqtt-<uuid>` (upstream uses `govee2mqtt/<uuid>`).
+  Mosquitto >= 2.1 (Home Assistant Mosquitto add-on 7.x) rejects client ids
+  containing `/` as "dangerous" and silently denies every publish/subscribe
+  after a successful CONNACK, which makes all entities unavailable. See
+  [wez/govee2mqtt#659](https://github.com/wez/govee2mqtt/issues/659).
+
 ## Usage
 
 * [Installing the HASS Add-On](docs/ADDON.md) - for HAOS and Supervised HASS users

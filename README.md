@@ -96,6 +96,11 @@ Hardening applied to all three:
   scopes they genuinely need: `packages: write` for the jobs that push images
   to GHCR, `id-token: write` for the add-on build, and `issues: write` for the
   no-response bot.
+* **Dependabot** (`.github/dependabot.yml`) watches four manifests weekly and
+  groups each into one pull request: Cargo crates, the pinned GitHub Actions,
+  the root `Dockerfile` base images, and the add-on `Dockerfile` base images.
+  Because Dependabot understands the `<sha> # <tag>` form, pinning to a SHA
+  does not leave the actions stranded on a stale release.
 
 ## Credits
 

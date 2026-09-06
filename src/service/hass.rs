@@ -13,13 +13,13 @@ use crate::temperature::TemperatureScale;
 use anyhow::Context;
 use async_channel::Receiver;
 use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
+use mosquitto_rs::{Client, Event, QoS};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
-use mosquitto_rs::{Client, Event, QoS};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(15);
 
@@ -584,9 +584,7 @@ async fn mqtt_switch_command(
                 let _ = client
                     .publish(format!("gv2mqtt/fan/{id}/state"), "OFF")
                     .await;
-                let _ = client
-                    .publish(stab_key, "0")
-                    .await;
+                let _ = client.publish(stab_key, "0").await;
             }
         }
     } else if let Some(client) = state.get_platform_client().await {
@@ -626,7 +624,7 @@ async fn mqtt_fan_preset_mode_command(
         .humidifier_set_parameter(&device, mode_num, value)
         .await
         .context("mqtt_fan_preset_mode_command: humidifier_set_parameter")?;
-    
+
     Ok(())
 }
 
@@ -635,9 +633,7 @@ async fn mqtt_fan_percentage_command(
     Payload(payload): Payload<String>,
     Params(IdParameter { id }): Params<IdParameter>,
     State(state): State<StateHandle>,
-)
-    -> anyhow::Result<()>
-{
+) -> anyhow::Result<()> {
     use std::time::Duration;
 
     let pct: i64 = payload.trim().parse().unwrap_or(0).clamp(0, 100);
@@ -697,7 +693,9 @@ async fn mqtt_fan_percentage_command(
         if step == 0 {
             let _ = state2.device_power_on(&device, false).await;
             if let Some(client) = state2.get_hass_client().await {
-                let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "OFF").await;
+                let _ = client
+                    .publish(format!("gv2mqtt/fan/{id2}/state"), "OFF")
+                    .await;
                 let _ = client.publish(stab_key2.clone(), "0").await;
             }
             {
@@ -729,10 +727,26 @@ async fn mqtt_fan_percentage_command(
 
         // Apply step
         match step {
-            1 => if let Some(idn) = gear_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 1).await; },
-            2 => if let Some(idn) = gear_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 2).await; },
-            3 => if let Some(idn) = gear_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 3).await; },
-            _ => if let Some(idn) = custom_mode_id { let _ = state2.humidifier_set_parameter(&device, idn, 0).await; }, // custom => 100%
+            1 => {
+                if let Some(idn) = gear_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 1).await;
+                }
+            }
+            2 => {
+                if let Some(idn) = gear_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 2).await;
+                }
+            }
+            3 => {
+                if let Some(idn) = gear_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 3).await;
+                }
+            }
+            _ => {
+                if let Some(idn) = custom_mode_id {
+                    let _ = state2.humidifier_set_parameter(&device, idn, 0).await;
+                }
+            } // custom => 100%
         }
 
         // Re-check epoch before publishing final mirror
@@ -746,8 +760,12 @@ async fn mqtt_fan_percentage_command(
         fan_mark_stabilize(&stab_key2, 3).await;
 
         if let Some(client) = state2.get_hass_client().await {
-            let _ = client.publish(format!("gv2mqtt/fan/{id2}/state"), "ON").await;
-            let _ = client.publish(stab_key2.clone(), pct_show.to_string()).await;
+            let _ = client
+                .publish(format!("gv2mqtt/fan/{id2}/state"), "ON")
+                .await;
+            let _ = client
+                .publish(stab_key2.clone(), pct_show.to_string())
+                .await;
         }
 
         // Cleanup debounce
@@ -828,10 +846,16 @@ async fn run_mqtt_loop(
             .route("gv2mqtt/switch/:id/command/:instance", mqtt_switch_command)
             .await?;
         router
-            .route("gv2mqtt/fan/:id/set-preset-mode", mqtt_fan_preset_mode_command)
+            .route(
+                "gv2mqtt/fan/:id/set-preset-mode",
+                mqtt_fan_preset_mode_command,
+            )
             .await?;
         router
-            .route("gv2mqtt/fan/:id/set-percentage", mqtt_fan_percentage_command)
+            .route(
+                "gv2mqtt/fan/:id/set-percentage",
+                mqtt_fan_percentage_command,
+            )
             .await?;
 
         router.route(oneclick_topic(), mqtt_oneclick).await?;

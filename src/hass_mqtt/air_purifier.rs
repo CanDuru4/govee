@@ -4,7 +4,7 @@ use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::platform_api::DeviceType;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{
-    availability_topic, topic_safe_id, HassClient, fan_in_stabilize_window, fan_pinned_pct,
+    availability_topic, fan_in_stabilize_window, fan_pinned_pct, topic_safe_id, HassClient,
 };
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
@@ -147,7 +147,10 @@ impl EntityInstance for AirPurifier {
         if let Some(pinned) = fan_pinned_pct(&pct_topic_key).await {
             if fan_in_stabilize_window(&pct_topic_key).await {
                 _client
-                    .publish(&self.air_purifier.state_topic, if pinned > 0 { "ON" } else { "OFF" })
+                    .publish(
+                        &self.air_purifier.state_topic,
+                        if pinned > 0 { "ON" } else { "OFF" },
+                    )
                     .await?;
                 let pct_topic = self.air_purifier.percentage_state_topic.as_ref().unwrap();
                 _client.publish(pct_topic, pinned.to_string()).await?;
@@ -165,7 +168,10 @@ impl EntityInstance for AirPurifier {
         if let Some(device_state) = device.device_state() {
             let on = device_state.on;
             _client
-                .publish(&self.air_purifier.state_topic, if on { "ON" } else { "OFF" })
+                .publish(
+                    &self.air_purifier.state_topic,
+                    if on { "ON" } else { "OFF" },
+                )
                 .await?;
 
             if let Some(pct_topic) = &self.air_purifier.percentage_state_topic {
@@ -185,7 +191,9 @@ impl EntityInstance for AirPurifier {
                             .and_then(|v| v.as_i64());
                     }
 
-                    if let (Some(wm_id), Ok(wm)) = (work_mode_id, ParsedWorkMode::with_device(&device)) {
+                    if let (Some(wm_id), Ok(wm)) =
+                        (work_mode_id, ParsedWorkMode::with_device(&device))
+                    {
                         let gear_id = wm.mode_by_name("gearMode").and_then(|m| m.value.as_i64());
                         let custom_id = wm
                             .modes
@@ -221,5 +229,4 @@ impl EntityInstance for AirPurifier {
 
         Ok(())
     }
-
 }

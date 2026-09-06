@@ -1,7 +1,29 @@
+# Build output
 target
-.*sw?
-.env
 docker-target
+
+# Editor / OS noise
+.*sw?
+.DS_Store
+
+# Node tooling pulled in only by the devcontainer target in the Makefile
 node_modules
 package.json
 package-lock.json
+
+# Python helper scratch, if any
+__pycache__/
+.venv/
+
+# Secrets and machine-local material. AmazonRootCA1.pem is Amazon's public
+# root CA and is deliberately tracked; everything else of that shape is not.
+.env
+.env.*
+!.env.example
+*.pem
+!AmazonRootCA1.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx

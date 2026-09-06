@@ -193,7 +193,7 @@ Hardening applied to all three:
 
 * **Every third-party action is pinned to a full commit SHA**, with the
   human-readable tag kept in a trailing comment (for example
-  `actions/checkout@11d5960... # v4.4.0`). A mutable tag such as `@v4` can be
+  `actions/checkout@3d3c42e5... # v7.0.1`). A mutable tag such as `@v7` can be
   repointed by the action's owner at any time; a SHA cannot.
 * **`permissions: contents: read` is declared at the top level** of each
   workflow, so every job starts read-only. Jobs re-declare only the extra

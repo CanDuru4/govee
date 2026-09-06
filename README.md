@@ -75,6 +75,28 @@ Other fork-specific changes:
 * [Check out the FAQ](docs/FAQ.md)
 
 
+## Continuous integration & supply-chain security
+
+Three GitHub Actions workflows live in `.github/workflows/`:
+
+|Workflow|Trigger|What it does|
+|--------|-------|------------|
+|`pr.yml`|Pull requests to `main`|`cargo build --all`, `cargo test --all`, `cargo fmt --check`|
+|`build.yml`|Push to `main`, `20*` tags, pull requests|Cross-compiles for `linux/amd64`, `linux/arm/v7` and `linux/arm64`, pushes per-arch digests to `ghcr.io/canduru4/govee`, merges them into a multi-arch manifest, and on a tag builds the Home Assistant add-on images|
+|`no-response.yml`|Daily cron + issue comments|Closes issues left waiting on the reporter|
+
+Hardening applied to all three:
+
+* **Every third-party action is pinned to a full commit SHA**, with the
+  human-readable tag kept in a trailing comment (for example
+  `actions/checkout@11d5960... # v4.4.0`). A mutable tag such as `@v4` can be
+  repointed by the action's owner at any time; a SHA cannot.
+* **`permissions: contents: read` is declared at the top level** of each
+  workflow, so every job starts read-only. Jobs re-declare only the extra
+  scopes they genuinely need: `packages: write` for the jobs that push images
+  to GHCR, `id-token: write` for the add-on build, and `issues: write` for the
+  no-response bot.
+
 ## Credits
 
 This work is based on my earlier work with [Govee LAN

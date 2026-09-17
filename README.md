@@ -6,26 +6,20 @@
 [![Container](https://img.shields.io/badge/image-ghcr.io%2Fcanduru4%2Fgovee-2496ED?logo=docker&logoColor=white)](https://github.com/CanDuru4/govee/pkgs/container/govee)
 [![Home Assistant add-on](https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5?logo=homeassistant&logoColor=white)](docs/ADDON.md)
 
-This repo provides a `govee` executable whose primary purpose is to act
-as a bridge between [Govee](https://govee.com) devices and Home Assistant,
-via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrations/mqtt/).
-
+This repo provides a `govee` executable whose primary purpose is to act as a
+bridge between [Govee](https://govee.com) devices and Home Assistant, via the
+[Home Assistant MQTT Integration](https://www.home-assistant.io/integrations/mqtt/).
 It is for anyone running Home Assistant who wants their Govee lights,
 humidifiers, air purifiers and other devices to appear as native entities
-without going through the Govee cloud app. The bridge talks to devices over
-the Govee LAN API where possible, falls back to Govee's undocumented AWS IoT
-service for low-latency status, and finally to the public Platform API. It
-ships as a multi-arch container image and as a Home Assistant add-on.
+without going through the Govee cloud app. The bridge talks to devices over the
+Govee LAN API where possible, falls back to Govee's undocumented AWS IoT service
+for low-latency status, and finally to the public Platform API. It ships as a
+multi-arch container image and as a Home Assistant add-on.
 
-## About this fork
-
-This project is derived from and heavily based on the upstream project
-[wez/govee2mqtt](https://github.com/wez/govee2mqtt). This fork adds support and
-enhancements specifically for the Govee H7126 air purifier.
-
-The upstream project by Wez is excellent and remains the canonical source for
-broader device support and documentation. Please consider starring and supporting
-the upstream project if you find this useful.
+This is a fork of [wez/govee2mqtt](https://github.com/wez/govee2mqtt) that adds
+support and enhancements for the Govee H7126 air purifier. The upstream project
+remains the canonical source for broader device support and documentation;
+please consider starring and supporting it if you find this useful.
 
 ## Features
 
@@ -55,26 +49,26 @@ the upstream project if you find this useful.
 * `LAN` means that you have enabled the [Govee LAN API](https://app-h5.govee.com/user-manual/wlan-guide)
   on supported devices and that the LAN API protocol is functional on your network
 
-### H7126 Air Purifier additions in this fork
+Is your device supported? See [docs/SKUS.md](docs/SKUS.md) and the
+[FAQ](docs/FAQ.md).
 
-This fork focuses on adding support for the Govee H7126 air purifier. It
-enables Home Assistant discovery and control via MQTT for the H7126 model.
-Additional improvements may be included over time.
+### Fork-specific changes
 
-Other fork-specific changes:
-
-* MQTT client id is `govee2mqtt-<uuid>` (upstream uses `govee2mqtt/<uuid>`).
-  Mosquitto >= 2.1 (Home Assistant Mosquitto add-on 7.x) rejects client ids
-  containing `/` as "dangerous" and silently denies every publish/subscribe
-  after a successful CONNACK, which makes all entities unavailable. See
+* **H7126 air purifier.** Home Assistant discovery and control via MQTT for the
+  H7126 model. Details in [docs/H7126_SUPPORT.md](docs/H7126_SUPPORT.md).
+* **Mosquitto-safe client id.** The MQTT client id is `govee2mqtt-<uuid>`
+  (upstream uses `govee2mqtt/<uuid>`). Mosquitto >= 2.1 (Home Assistant
+  Mosquitto add-on 7.x) rejects client ids containing `/` as "dangerous" and
+  silently denies every publish/subscribe after a successful CONNACK, which
+  makes all entities unavailable. See
   [wez/govee2mqtt#659](https://github.com/wez/govee2mqtt/issues/659).
-
-* The `H600B` Smart LED Bulb has a quirk (`Quirk::light("H600B", BULB)`,
-  2700-6500 K). Upstream has none for this SKU, so the bulb fell back to the
-  Platform API for control and to a 5-second-delayed poll for state; that poll
-  returns the *previous* state, which made Home Assistant flicker between the
-  old and the new brightness after every change. With the quirk the bulb uses
-  the AWS IoT path: instant control and push state updates.
+* **H600B bulb quirk.** The `H600B` Smart LED Bulb has a quirk
+  (`Quirk::light("H600B", BULB)`, 2700-6500 K). Upstream has none for this SKU,
+  so the bulb fell back to the Platform API for control and to a
+  5-second-delayed poll for state; that poll returns the *previous* state,
+  which made Home Assistant flicker between the old and the new brightness
+  after every change. With the quirk the bulb uses the AWS IoT path: instant
+  control and push state updates.
 
 ## Tech stack
 
@@ -109,33 +103,21 @@ source:
 * To build from source: a stable Rust toolchain and the system dependencies
   needed by `mosquitto-rs`
 
-### Build and run from source
+### Installation
+
+To build from source:
 
 ```bash
 git clone https://github.com/CanDuru4/govee.git
 cd govee
-
 cargo build --release
-cargo test --all
-
-# Makefile shortcuts: `make check` (cargo check), `make test` (cargo nextest
-# run), `make fmt` (nightly rustfmt), `make docker`, `make addon`
-
-# List the devices your account can see
-./target/release/govee list
-
-# Run the bridge; the web UI is then on http://localhost:8056/assets/index.html
-./target/release/govee serve
 ```
 
-Other subcommands: `lan-disco`, `lan-control`, `list-http`, `http-control`,
-`undoc`. Run `govee --help` for the full set.
-
-### Environment variables
+### Configuration
 
 Configuration is read from flags, from the environment, or from a `.env` file
 in the working directory. Names only below - never commit real values; `.env`
-is git-ignored.
+is git-ignored. The full reference is in [docs/CONFIG.md](docs/CONFIG.md).
 
 |Variable|Purpose|
 |--------|-------|
@@ -158,6 +140,19 @@ is git-ignored.
 `GOVEE_LOG_SENSITIVE_DATA` exists for debugging only. It causes credentials and
 tokens to be written to the log; leave it unset.
 
+## Usage
+
+```bash
+# List the devices your account can see
+./target/release/govee list
+
+# Run the bridge; the web UI is then on http://localhost:8056/assets/index.html
+./target/release/govee serve
+```
+
+Other subcommands: `lan-disco`, `lan-control`, `list-http`, `http-control`,
+`undoc`. Run `govee --help` for the full set.
+
 ## Project structure
 
 ```
@@ -177,16 +172,26 @@ assets/               static files for the built-in web UI
 docs/                 ADDON, DOCKER, CONFIG, LAN, SKUS, FAQ, PRIVACY, H7126_SUPPORT
 scripts/              cross-compilation, docker build and release tagging helpers
 test-data/            recorded API payloads used by the snapshot tests
+repository.yaml       Home Assistant add-on repository manifest
 ```
 
-## Continuous integration & supply-chain security
+## Testing
+
+```bash
+cargo test --all
+```
+
+Makefile shortcuts: `make check` (cargo check), `make test` (cargo nextest
+run), `make fmt` (nightly rustfmt), `make docker`, `make addon`.
+
+## Deployment
 
 Three GitHub Actions workflows live in `.github/workflows/`:
 
 |Workflow|Trigger|What it does|
 |--------|-------|------------|
 |`pr.yml`|Pull requests to `main`|`cargo build --all`, `cargo test --all`, `cargo fmt --check`|
-|`build.yml`|Push to `main`, `20*` tags, pull requests|Cross-compiles for `linux/amd64`, `linux/arm/v7` and `linux/arm64`, pushes per-arch digests to `ghcr.io/canduru4/govee`, merges them into a multi-arch manifest, and on a tag builds the Home Assistant add-on images|
+|`build.yml`|Pull requests to `main`; pushes to `main` that touch Rust, Cargo, add-on, Docker or build-script files; `20*` tags|Cross-compiles for `linux/amd64`, `linux/arm/v7` and `linux/arm64`. On pushes and tags it pushes per-arch digests to `ghcr.io/canduru4/govee` and merges them into a multi-arch manifest; on a tag it also builds the Home Assistant add-on images. Pull requests build without pushing|
 |`no-response.yml`|Daily cron + issue comments|Closes issues left waiting on the reporter|
 
 Hardening applied to all three:
@@ -206,12 +211,7 @@ Hardening applied to all three:
   Because Dependabot understands the `<sha> # <tag>` form, pinning to a SHA
   does not leave the actions stranded on a stale release.
 
-## Have a question?
-
-* [Is my device supported?](docs/SKUS.md)
-* [Check out the FAQ](docs/FAQ.md)
-
-## Credits
+## Acknowledgments
 
 * [Wez Furlong](https://github.com/wez) wrote
   [govee2mqtt](https://github.com/wez/govee2mqtt), the upstream project this
@@ -220,14 +220,14 @@ Hardening applied to all three:
 * AWS IoT support was made possible by the work of @bwp91 in
   [homebridge-govee](https://github.com/bwp91/homebridge-govee/).
 
-## Attribution & License
+## License
 
-This project is based on and includes substantial portions of
-[wez/govee2mqtt](https://github.com/wez/govee2mqtt), which is licensed under the
-MIT License. This fork keeps the same MIT License. See `LICENSE.md` for the
-full text. All original copyrights remain with their respective owners; any
-modifications in this fork are provided under the same MIT terms.
+MIT, see [LICENSE.md](LICENSE.md). This project is based on and includes
+substantial portions of [wez/govee2mqtt](https://github.com/wez/govee2mqtt),
+which is licensed under the MIT License, and this fork keeps the same license.
+All original copyrights remain with their respective owners; any modifications
+in this fork are provided under the same MIT terms.
 
 ## Author
 
-Can Duru - [canduru.net](https://canduru.net)
+Can Duru — [canduru.net](https://canduru.net)

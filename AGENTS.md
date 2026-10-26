@@ -73,3 +73,10 @@ Home Assistant add-on. Rust 2021, tokio, axum, mosquitto-rs, reqwest, rusqlite.
   upstream files; the owner's docblock rule applies to new code and fork-specific changes.
 - Fork-specific changes are listed in the README "Fork-specific changes" section; update it
   when adding one.
+
+## Validation placement and reuse (owner update 2026-10-26)
+
+- Follow the global Claude/Codex test policy and `~/Developer/personal/mac-mini/validation-economy/README.md` and `COVERAGE.md`. Focus first; full coverage only when the changed inputs require it. Docs-only policy edits need no application suite or deploy.
+- Manual heavy commands use `repo-run.py --repo <absolute checkout> --profile <profile> -- <command>` from the shared helper; choose from rust / container for the actual tool. Tiny syntax checks need no reservation. Bound tool workers and reserve separate heavy phases.
+- Brain currently provides Python/Node Linux images only. Required GPU, Rust, OpenSCAD, Java or course compiler/container checks keep their documented toolchain and location; do not substitute an incompatible runtime to report a pass.
+- Reuse only supported receipts with matching source, coverage, dependencies, runtime/platform and relevant environment. Preserve passed unaffected batches; count remote results only when the owning gate aggregates them. Receipts do not replace required build artifacts or OS/device/browser proof. Split or offload an impossible reservation instead of waiting indefinitely; only stop your own obsolete jobs.

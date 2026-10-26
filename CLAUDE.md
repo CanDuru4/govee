@@ -1,5 +1,7 @@
 @AGENTS.md
 
+Validation scope, shared capacity and remote execution follow AGENTS.md. Command examples below do not require a full-suite rerun for every edit.
+
 ## Claude Code
 - After Rust edits, run the three `pr.yml` commands from AGENTS.md.
   No Rust toolchain may be on PATH on this Mac; if `cargo` is missing, say so instead of skipping silently.

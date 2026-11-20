@@ -46,9 +46,8 @@ Home Assistant add-on. Rust 2021, tokio, axum, mosquitto-rs, reqwest, rusqlite.
 - If GitHub Actions is unavailable, run the three `pr.yml` commands locally before merging (`cargo build --all`; `cargo test --all -- --show-output`; `cargo fmt --all -- --check`).
 
 ## Gotchas
-- HA builder action: `2026.06.0` was found to ship no builder image, so it was pinned to
-  `2026.02.1` (commit 88526d5). Dependabot PR #15 bumped it back to `2026.06.0`; check the
-  `addon` job on the next tag and re-pin if it fails.
+- HA builder action is pinned by SHA in `.github/workflows/build.yml` (now `2026.09.0`); `2026.06.0` shipped
+  no builder image. After any bump, check the `addon` job on the next tag and re-pin if it fails.
 - Do not re-add a `cosign:` block to `addon/build.yaml`: it forces base-image signature
   verification and the floating `bookworm` base tags are unsigned (removed in db1621e).
 - The MQTT client id must stay `govee2mqtt-<uuid>`; Mosquitto >= 2.1 silently denies all
